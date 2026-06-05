@@ -10,7 +10,7 @@
 <br>
 <br>
 
-[![arXiv](https://img.shields.io/badge/arXiv-Paper-<COLOR>.svg)](https://arxiv.org/abs/2504.02821)
+[![arXiv](https://img.shields.io/badge/arXiv-Paper-<COLOR>.svg)](https://arxiv.org/abs/2504.02821) [![Weights](https://img.shields.io/badge/HuggingFace-Weights-orange?logo=huggingface)](https://huggingface.co/mateuszpach/sae-for-vlm)
 </div>
 
 <h3 align="center">Abstract</h3>
@@ -58,15 +58,21 @@ To facilitate advancements in monosemanticity metrics, we release benchmark data
 
 See Appendix D: Benchmark attached to the article to learn more.
 
+### SAE Weights
+To reuse the pretrained SAE weights from this project, download them from Hugging Face with: `download_weights.py`
 
 
+<br><br>
 We use the implementation of sparse autoencoders available at https://github.com/saprmarks/dictionary_learning.
+
 ### Citation
 ```bibtex
-@article{pach2025sparse,
-  title={Sparse Autoencoders Learn Monosemantic Features in Vision-Language Models}, 
-  author={Mateusz Pach and Shyamgopal Karthik and Quentin Bouniot and Serge Belongie and Zeynep Akata},
-  journal={arXiv preprint arXiv:2504.02821},
-  year={2025}
+@article{pach2026sparse,
+  title={Sparse autoencoders learn monosemantic features in vision-language models},
+  author={Pach, Mateusz and Karthik, Shyamgopal and Bouniot, Quentin and Belongie, Serge and Akata, Zeynep},
+  journal={Advances in Neural Information Processing Systems},
+  volume={38},
+  pages={95706--95742},
+  year={2026}
 }
 ```
