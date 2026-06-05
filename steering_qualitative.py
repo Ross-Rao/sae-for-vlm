@@ -4,7 +4,7 @@ from PIL import Image
 import requests
 
 llava = Llava("cuda")
-sae_path = "checkpoints_dir/matroyshka_batch_top_k_20_x64/random_k_2/imagenet_train_activations_clip-vit-large-patch14-336_22_post_mlp_residual_matroyshka_batch_top_k_20_x64/trainer_0/checkpoints/ae_100000.pt"
+sae_path = "checkpoints_dir/matroyshka_batch_top_k_20_x64/random_k_2/imagenet_train_activations_clip-vit-large-patch14-336_22_post_mlp_residual_matroyshka_batch_top_k_20_x64/trainer_0/checkpoints/ae_200000.pt"
 sae = MatroyshkaBatchTopKSAE.from_pretrained(sae_path).cuda()
 text = "Write me a short love poem"
 url = "https://img.freepik.com/free-photo/cement-texture_1194-5269.jpg?semt=ais_hybrid"
