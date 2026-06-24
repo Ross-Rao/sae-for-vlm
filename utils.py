@@ -13,6 +13,8 @@ def get_collate_fn(processor):
         return processor(images=images, return_tensors="pt", padding=True)
     return collate_fn
 
+DATASETS_BASE = "/media/tai/002dda08-6217-423d-9b45-31f72c49d1c5/ilab/Ross-rao/datasets"
+
 def get_dataset(args, preprocess, processor, split, subset=1.0):
     if args.dataset_name == 'cc3m':
         # if subset < 1.0:
@@ -27,6 +29,15 @@ def get_dataset(args, preprocess, processor, split, subset=1.0):
         ds = ImageNet(root=args.data_path, split=split, transform=preprocess)
     elif args.dataset_name == 'cub':
         ds = ImageFolder(root=os.path.join(args.data_path, split), transform=preprocess)
+    elif args.dataset_name == 'omnimed':
+        from datasets.medical_vqa import OmniMedVQADataset, MedicalImageOnlyDataset
+        root = args.data_path or os.path.join(DATASETS_BASE, 'OmniMedVQA/OmniMedVQA')
+        ds = MedicalImageOnlyDataset(OmniMedVQADataset(root, transform=preprocess))
+    elif args.dataset_name == 'pmcvqa':
+        from datasets.medical_vqa import PMCVQADataset, MedicalImageOnlyDataset
+        root = args.data_path or os.path.join(DATASETS_BASE, 'PMC-VQA')
+        csv_file = os.path.join(root, f'{split}.csv' if split != 'test' else 'test_clean.csv')
+        ds = MedicalImageOnlyDataset(PMCVQADataset(csv_file, img_dir=os.path.join(root, 'images'), transform=preprocess))
 
     keep_every = int(1.0 / subset)
     if keep_every > 1:
@@ -49,6 +60,18 @@ def get_model(args):
     elif args.model_name.startswith('siglip'):
         siglip = Siglip(args.model_name, args.device)
         return siglip, siglip.processor
+    elif args.model_name == 'llava_med':
+        from models.llava_med import LlavaMed
+        llava_med = LlavaMed(args.device)
+        return llava_med, llava_med.processor
+    elif args.model_name == 'med_flamingo':
+        from models.med_flamingo import MedFlamingo
+        flamingo = MedFlamingo(args.device)
+        return flamingo, flamingo.processor
+    elif args.model_name == 'chexagent':
+        from models.chexagent import CheXAgent
+        chexagent = CheXAgent(args.device)
+        return chexagent, chexagent.processor
 
 def get_text_model(args):
     if args.model_name.startswith('clip'):

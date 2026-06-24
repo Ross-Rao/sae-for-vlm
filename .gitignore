@@ -1,0 +1,8 @@
+results/
+vqa_results/
+activations_dir/
+checkpoints_dir/
+embeddings_dir/
+__pycache__/
+*.pyc
+.env

@@ -46,8 +46,9 @@ def save_activations(activations, count, split, save_count, args):
         # Keep only CLS token
         activations_tensor =  activations_tensor[:, 0, :]
     elif args.mean_pool:
-        # Mean pool tokens into one data point
-        activations_tensor =  torch.mean(activations_tensor, dim=1)
+        # Mean pool tokens into one data point (skip if already 2D, e.g. when SAE pooled in hook)
+        if activations_tensor.dim() == 3:
+            activations_tensor = torch.mean(activations_tensor, dim=1)
     elif args.random_k != -1:
         # Treat each token as a separate data point but pick random k tokens from each image
         batch_size, seq_len, hidden_dim = activations_tensor.shape
@@ -79,7 +80,7 @@ def collect_activations(args):
         sae = None
         print(f"No SAE attached. Saving original activations")
 
-    model.attach(args.attachment_point, args.layer, sae=sae)
+    model.attach(args.attachment_point, args.layer, sae=sae, mean_pool=args.mean_pool if sae is not None else False)
 
     ds, dl = get_dataset(args, preprocess=None, processor=processor, split=args.split)
     activations = []

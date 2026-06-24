@@ -14,22 +14,28 @@ def get_args_parser():
     parser.add_argument("--activations_dir")
     parser.add_argument("--output_subdir")
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--take_every", type=int, default=1, help="Subsample every N-th image to reduce O(n^2) cost")
     return parser
 
 def main(args):
-    # Load embeddings
-    embeddings = torch.load(args.embeddings_path, map_location=torch.device(args.device))
+    # Load embeddings to CPU first, then subsample to match take_every stride
+    all_embeddings = torch.load(args.embeddings_path, map_location=torch.device('cpu'))
     print(f"Loaded embeddings found at {args.embeddings_path}")
-    print(f"Embeddings shape: {embeddings.shape}")
+    print(f"Embeddings shape: {all_embeddings.shape}")
 
-    # Load activations
-    activations_dataset = ActivationsDataset(args.activations_dir, device=torch.device(args.device), take_every=1)
+    # Load activations on CPU; individual slices are moved to GPU inside the loop
+    activations_dataset = ActivationsDataset(args.activations_dir, device=torch.device('cpu'), take_every=args.take_every)
     activations_dataloader = DataLoader(activations_dataset, batch_size=len(activations_dataset), shuffle=False)
     activations = next(iter(activations_dataloader))
     print(f"Loaded activations found at {args.activations_dir}")
     print(f"Activations shape: {activations.shape}")
 
-    # Scale to 0-1 per neuron
+    # Subsample embeddings to the same rows that take_every selected (0, N, 2N, ...)
+    selected_indices = list(range(0, all_embeddings.shape[0], args.take_every))[:activations.shape[0]]
+    embeddings = all_embeddings[selected_indices].to(args.device)
+    print(f"Subsampled embeddings shape: {embeddings.shape}")
+
+    # Scale to 0-1 per neuron (on CPU to avoid OOM for large SAE activations)
     min_values = activations.min(dim=0, keepdim=True)[0]
     max_values = activations.max(dim=0, keepdim=True)[0]
     activations = (activations - min_values) / (max_values - min_values)
@@ -38,9 +44,9 @@ def main(args):
     num_images, embed_dim = embeddings.shape
     num_neurons = activations.shape[1]
 
-    # Initialize accumulators
-    weighted_cosine_similarity_sum = torch.zeros(num_neurons, device=torch.device(args.device))
-    weight_sum = torch.zeros(num_neurons, device=torch.device(args.device))
+    # Initialize accumulators on CPU (accumulated .cpu() results in the loop)
+    weighted_cosine_similarity_sum = torch.zeros(num_neurons)
+    weight_sum = torch.zeros(num_neurons)
     batch_size = 100  # Set batch size
 
     for i in tqdm.tqdm(range(num_images), desc="Processing image pairs"):
@@ -70,7 +76,7 @@ def main(args):
             weights = torch.sum(weights, dim=0)  # (num_neurons)
             weight_sum += weights.cpu()
 
-    monosemanticity = torch.where(weight_sum != 0, weighted_cosine_similarity_sum / weight_sum, torch.nan)
+    monosemanticity = torch.where(weight_sum != 0, weighted_cosine_similarity_sum / weight_sum, torch.tensor(float('nan')))
 
     os.makedirs(os.path.join(args.activations_dir, args.output_subdir), exist_ok=True)
     torch.save(monosemanticity, os.path.join(args.activations_dir, args.output_subdir, "all_neurons_scores.pth"))

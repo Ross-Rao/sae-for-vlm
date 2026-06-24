@@ -149,7 +149,8 @@ def validation(val_data, autocast_dtype, trainer, log_queue, norm_factor):
             f"val_threshold_{threshold_str}/frac_variance_explained": t.mean(t.tensor(fracs)).item(),
         }
 
-        log_queue.put(log)
+        if log_queue is not None:
+            log_queue.put(log)
 
 
 def trainSAE(
@@ -264,7 +265,7 @@ def trainSAE(
         # logging validation
         # if (use_wandb or verbose) and step % save_steps == 0:
         if step % log_steps == 0:
-            validation(val_data, autocast_dtype, trainers[0], log_queues[0], norm_factor)
+            validation(val_data, autocast_dtype, trainers[0], log_queues[0] if log_queues else None, norm_factor)
 
         # saving
         if save_steps is not None and step in save_steps:

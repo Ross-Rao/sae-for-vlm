@@ -36,6 +36,7 @@ def get_args_parser():
     parser.add_argument("--threshold_start_step", type=int, default=1000)
     # MatryoshkaBatchTopK
     parser.add_argument("--group_fractions", type=float, nargs="+")
+    parser.add_argument("--no_wandb", default=False, action="store_true")
 
     return parser
 
@@ -104,7 +105,7 @@ def train_sae(args):
         data=dataloader,
         val_data=val_dataloader,
         trainer_configs=[trainer_cfg],
-        use_wandb=True,
+        use_wandb=not args.no_wandb,
         wandb_entity="mateuszpach",
         wandb_project="Clip SAE",
         steps=args.steps,
