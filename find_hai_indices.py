@@ -13,25 +13,24 @@ import math
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Find indices of highest activating images from activations")
-    parser.add_argument('--activations_dir', type=str, required=True)
+    parser.add_argument("--activations_dir", type=str, required=True)
     parser.add_argument("--dataset_name", default="imagenet", type=str)
     parser.add_argument("--data_path", default="/shared-network/inat2021", type=str)
-    parser.add_argument('--split', type=str, default='train')
-    parser.add_argument('--k', type=int, default=16)
-    parser.add_argument('--chunk_size', type=int)
+    parser.add_argument("--split", type=str, default="train")
+    parser.add_argument("--k", type=int, default=16)
+    parser.add_argument("--chunk_size", type=int)
     return parser.parse_args()
 
 if __name__ == "__main__":
-    # Parse command line arguments
     args = parse_args()
-    args.batch_size = 1  # not used
-    args.num_workers = 0  # not used
+    args.batch_size = 1
+    args.num_workers = 0
 
-    hai_indices_path = os.path.join(args.activations_dir, f"hai_indices_{args.k}")
-    if os.path.exists(hai_indices_path):
-        print(f"HAI indices already saved at {hai_indices_path}")
+    hai_indices_path = os.path.join(args.activations_dir, f"hai_indices_{args.k}_nonzero")
+    if os.path.exists(hai_indices_path + ".npy"):
+        print(f"HAI indices already saved at {hai_indices_path}.npy")
     else:
-        print("Computing HAI indices", flush=True)
+        print("Computing HAI indices (non-zero filtered)", flush=True)
         print(f"Loading activations from {args.activations_dir}", flush=True)
         activations_dataset = ActivationsDataset(args.activations_dir, device=torch.device("cpu"))
         print(f"Dataset loaded. Total samples: {len(activations_dataset)}", flush=True)
@@ -47,6 +46,8 @@ if __name__ == "__main__":
 
         importants = []
         worst_hais = []
+        zero_count = 0
+        sparse_count = 0
         pbar = tqdm.tqdm(list(range(num_chunks)))
         for i in pbar:
             neuron_start = i * args.chunk_size
@@ -59,17 +60,38 @@ if __name__ == "__main__":
                 activations_chunks[sample_start:sample_end, :] = activations_chunk[:, neuron_start:neuron_end]
             for neuron in range(neuron_end - neuron_start):
                 neuron_activations = activations_chunks[:, neuron]
-                important = np.argsort(neuron_activations)[-args.k:]
+                nonzero_mask = neuron_activations > 0
+                nonzero_count = int(nonzero_mask.sum())
+                if nonzero_count == 0:
+                    # Dead neuron
+                    important = np.array([], dtype=np.int64)
+                    worst_hai = 0.0
+                    zero_count += 1
+                elif nonzero_count <= args.k:
+                    # Fewer than k non-zero images: take all, sorted ascending by activation
+                    nonzero_idx = np.where(nonzero_mask)[0]
+                    important = nonzero_idx[np.argsort(neuron_activations[nonzero_idx])]
+                    worst_hai = neuron_activations[important[0]]
+                    sparse_count += 1
+                else:
+                    # Enough non-zero images: take top k (all will be > 0)
+                    important = np.argsort(neuron_activations)[-args.k:]
+                    worst_hai = neuron_activations[important[0]]
                 importants.append(important)
-                worst_hai = neuron_activations[important[0]]
                 worst_hais.append(worst_hai)
 
-        hai_indices = np.array(importants)
-        print(f"hai_indices.shape(): {hai_indices.shape}")
-        np.save(hai_indices_path, hai_indices)
-        print(f"Saved HAI indices to: {hai_indices_path}")
+        print(f"Dead neurons (0 activations): {zero_count}")
+        print(f"Sparse neurons (<{args.k} non-zero): {sparse_count}")
+        print(f"Normal neurons (>={args.k} non-zero): {num_neurons - zero_count - sparse_count}")
 
-        worst_hai_indices_path = os.path.join(args.activations_dir, f"hai_indices_{args.k}_worst")
+        # Save as object array to support variable-length rows
+        hai_indices = np.empty(len(importants), dtype=object)
+        for i, imp in enumerate(importants):
+            hai_indices[i] = imp
+        np.save(hai_indices_path, hai_indices)
+        print(f"Saved HAI indices to: {hai_indices_path}.npy")
+
+        worst_hai_indices_path = os.path.join(args.activations_dir, f"hai_indices_{args.k}_nonzero_worst")
         worst_hais = np.array(worst_hais)
         np.save(worst_hai_indices_path, worst_hais)
-        print(f"Saved worst HAI indices to: {worst_hai_indices_path}")
+        print(f"Saved worst HAI to: {worst_hai_indices_path}.npy")

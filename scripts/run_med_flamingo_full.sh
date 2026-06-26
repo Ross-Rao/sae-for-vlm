@@ -1,6 +1,6 @@
 #!/bin/bash
-# LLaVA-Med SAE 完整流水线（Steering + Monosemanticity Score）
-# 日志和结果统一写入 results/llava_med_omnimed/
+# Med-Flamingo SAE 完整流水线（Steering + Monosemanticity Score）
+# 与 run_llava_med_full.sh 配置相同，仅模型换为 med_flamingo
 # Step 顺序：1(raw acts)→2(SAE train)→3(SAE acts)→4(HAI)→5(embed)→6(MS score)→7(steering)→8(visualize)
 
 set -e
@@ -8,10 +8,10 @@ set -e
 PROJECT_DIR="/media/tai/002dda08-6217-423d-9b45-31f72c49d1c5/ilab/Ross-rao/projects/sae-for-vlm"
 DATASET_PATH="/media/tai/002dda08-6217-423d-9b45-31f72c49d1c5/ilab/Ross-rao/datasets/OmniMedVQA/OmniMedVQA"
 PYTHON="${PROJECT_DIR}/.venv/bin/python"
-RESULTS_DIR="${PROJECT_DIR}/results/llava_med_omnimed"
+RESULTS_DIR="${PROJECT_DIR}/results/med_flamingo_omnimed"
 
-LAYER=23
-MODEL=llava_med
+LAYER=18
+MODEL=med_flamingo
 DATASET=omnimed
 SAE_MODEL=matroyshka_batch_top_k
 K=20
@@ -28,7 +28,7 @@ mkdir -p "$RESULTS_DIR"
 cd "$PROJECT_DIR"
 
 echo "========================================"
-echo " LLaVA-Med SAE Pipeline"
+echo " Med-Flamingo SAE Pipeline"
 echo " 结果目录: $RESULTS_DIR"
 echo " 开始时间: $(date '+%Y-%m-%d %H:%M:%S')"
 echo "========================================"
@@ -37,14 +37,14 @@ echo "========================================"
 echo ""
 echo "[Step 1/8] save_activations (raw, random_k=2)  $(date '+%H:%M:%S')"
 $PYTHON save_activations.py \
-  --batch_size 64 \
+  --batch_size 32 \
   --model_name "$MODEL" \
   --attachment_point post_mlp_residual \
   --layer "$LAYER" \
   --dataset_name "$DATASET" \
   --split train \
   --data_path "$DATASET_PATH" \
-  --num_workers 8 \
+  --num_workers 4 \
   --output_dir "$RAW_ACT_DIR" \
   --random_k 2 \
   --save_every 5000
@@ -72,14 +72,14 @@ $PYTHON sae_train.py \
 echo ""
 echo "[Step 3/8] save_activations (SAE, mean-pooled)  $(date '+%H:%M:%S')"
 $PYTHON save_activations.py \
-  --batch_size 64 \
+  --batch_size 32 \
   --model_name "$MODEL" \
   --attachment_point post_mlp_residual \
   --layer "$LAYER" \
   --dataset_name "$DATASET" \
   --split train \
   --data_path "$DATASET_PATH" \
-  --num_workers 8 \
+  --num_workers 4 \
   --output_dir "$MEAN_ACT_DIR" \
   --mean_pool \
   --save_every 5000 \
@@ -97,7 +97,7 @@ $PYTHON find_hai_indices.py \
   --k 16 \
   --chunk_size 1000
 
-# ── Step 5: 编码图片嵌入（BiomedCLIP）──────────────────────────────────────
+# ── Step 5: 编码图片嵌入（BiomedCLIP，可复用 LLaVA-Med 已有结果）────────────
 echo ""
 echo "[Step 5/8] encode_images  $(date '+%H:%M:%S')"
 if [ -f "$EMBED_PATH" ]; then
@@ -118,17 +118,17 @@ echo "[Step 6/8] monosemanticity score  $(date '+%H:%M:%S')"
 
 echo "  6a. 采集原始神经元激活（mean-pooled）..."
 $PYTHON save_activations.py \
-  --batch_size 64 \
+  --batch_size 32 \
   --model_name "$MODEL" \
   --attachment_point post_mlp_residual \
   --layer "$LAYER" \
   --dataset_name "$DATASET" \
   --split train \
   --data_path "$DATASET_PATH" \
-  --num_workers 8 \
+  --num_workers 4 \
   --output_dir "$ORIG_ACT_DIR" \
   --mean_pool \
-  --save_every 5000
+  --save_every 50000
 
 echo "  6b. metric.py (SAE 神经元)..."
 $PYTHON metric.py \
@@ -160,7 +160,7 @@ $PYTHON steering_score.py \
   --images_path "${DATASET_PATH}/Images/" \
   --no-pre_zero \
   --model_name biomedclip \
-  --vlm_backend llava_med \
+  --vlm_backend med_flamingo \
   --neuron_prefix 10 \
   --no-steer \
   --output_path "${RESULTS_DIR}/steering/no_steering/"
@@ -173,7 +173,7 @@ $PYTHON steering_score.py \
   --images_path "${DATASET_PATH}/Images/" \
   --no-pre_zero \
   --model_name biomedclip \
-  --vlm_backend llava_med \
+  --vlm_backend med_flamingo \
   --neuron_prefix 10 \
   --steer \
   --output_path "${RESULTS_DIR}/steering/with_steering/"

@@ -17,9 +17,6 @@ DATASETS_BASE = "/media/tai/002dda08-6217-423d-9b45-31f72c49d1c5/ilab/Ross-rao/d
 
 def get_dataset(args, preprocess, processor, split, subset=1.0):
     if args.dataset_name == 'cc3m':
-        # if subset < 1.0:
-        #     raise NotImplementedError
-        # return get_cc3m(args, preprocess, split)
         raise NotImplementedError
     elif args.dataset_name == 'inat_birds':
         ds = ImageFolder(root=os.path.join(args.data_path, split), transform=preprocess)
@@ -54,6 +51,10 @@ def get_model(args):
     if args.model_name.startswith('clip'):
         clip = Clip(args.model_name, args.device)
         return clip, clip.processor
+    elif args.model_name == 'biomedclip':
+        from models.biomedclip import BiomedCLIP
+        bc = BiomedCLIP(args.device)
+        return bc, bc.processor
     elif args.model_name.startswith('dino'):
         dino = Dino(args.model_name, args.device)
         return dino, dino.processor
@@ -78,6 +79,10 @@ def get_text_model(args):
         model = CLIPTextModelWithProjection.from_pretrained(f"openai/{args.model_name}").to(args.device)
         tokenizer = AutoTokenizer.from_pretrained(f"openai/{args.model_name}")
         return model, tokenizer
+    elif args.model_name == 'biomedclip':
+        from models.biomedclip import BiomedCLIP, BiomedCLIPTextEncoder, BiomedCLIPTokenizerWrapper
+        bc = BiomedCLIP(args.device)
+        return BiomedCLIPTextEncoder(bc.model, args.device), BiomedCLIPTokenizerWrapper(bc._tokenizer)
 
 class IdentitySAE(nn.Module):
     def encode(self, x):

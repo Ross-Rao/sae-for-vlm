@@ -15,118 +15,117 @@ def get_args_parser():
     parser.add_argument("--output_subdir")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--take_every", type=int, default=1, help="Subsample every N-th image to reduce O(n^2) cost")
+    parser.add_argument("--min_support", type=int, default=10,
+                        help="Minimum number of non-zero activating images required; neurons below this are set to NaN")
     return parser
 
+def print_and_save_stats(monosemanticity, num_neurons, output_path, min_support):
+    is_nan = torch.isnan(monosemanticity)
+    nan_count = is_nan.sum().item()
+    valid = monosemanticity[~is_nan]
+    mean = torch.mean(valid).item()
+    std  = torch.std(valid).item()
+
+    print(f"Monosemanticity: {mean} +- {std}")
+    print(f"NaN neurons (dead + low-support): {nan_count}")
+    print(f"Total neurons: {num_neurons}")
+
+    valid_mask = ~is_nan
+    valid_indices = torch.nonzero(valid_mask).squeeze()
+    valid_scores  = monosemanticity[valid_mask]
+
+    top_vals, top_local  = torch.topk(valid_scores, 10)
+    bot_vals, bot_local  = torch.topk(valid_scores, 10, largest=False)
+    top_idx = valid_indices[top_local]
+    bot_idx = valid_indices[bot_local]
+
+    print("Top 10 most monosemantic neurons:")
+    for i, (idx, val) in enumerate(zip(top_idx, top_vals)):
+        print(f"{i+1}. Neuron {idx.item()} - {val.item()}")
+    print("\nBottom 10 least monosemantic neurons:")
+    for i, (idx, val) in enumerate(zip(bot_idx, bot_vals)):
+        print(f"{i+1}. Neuron {idx.item()} - {val.item()}")
+
+    with open(output_path, "w") as f:
+        f.write(f"Monosemanticity: {mean} +- {std}\n")
+        f.write(f"NaN neurons (dead + low-support, min_support={min_support}): {nan_count}\n")
+        f.write(f"Total neurons: {num_neurons}\n\n")
+        f.write("Top 10 most monosemantic neurons:\n")
+        for idx, val in zip(top_idx, top_vals):
+            f.write(f"Neuron {idx.item()} - {val.item()}\n")
+        f.write("\nBottom 10 least monosemantic neurons:\n")
+        for idx, val in zip(bot_idx, bot_vals):
+            f.write(f"Neuron {idx.item()} - {val.item()}\n")
+
 def main(args):
-    # Load embeddings to CPU first, then subsample to match take_every stride
-    all_embeddings = torch.load(args.embeddings_path, map_location=torch.device('cpu'))
+    all_embeddings = torch.load(args.embeddings_path, map_location=torch.device("cpu"))
     print(f"Loaded embeddings found at {args.embeddings_path}")
     print(f"Embeddings shape: {all_embeddings.shape}")
 
-    # Load activations on CPU; individual slices are moved to GPU inside the loop
-    activations_dataset = ActivationsDataset(args.activations_dir, device=torch.device('cpu'), take_every=args.take_every)
+    activations_dataset = ActivationsDataset(args.activations_dir, device=torch.device("cpu"), take_every=args.take_every)
     activations_dataloader = DataLoader(activations_dataset, batch_size=len(activations_dataset), shuffle=False)
     activations = next(iter(activations_dataloader))
     print(f"Loaded activations found at {args.activations_dir}")
     print(f"Activations shape: {activations.shape}")
 
-    # Subsample embeddings to the same rows that take_every selected (0, N, 2N, ...)
     selected_indices = list(range(0, all_embeddings.shape[0], args.take_every))[:activations.shape[0]]
     embeddings = all_embeddings[selected_indices].to(args.device)
     print(f"Subsampled embeddings shape: {embeddings.shape}")
 
-    # Scale to 0-1 per neuron (on CPU to avoid OOM for large SAE activations)
+    # Count non-zero activating images per neuron BEFORE normalization
+    nonzero_count = (activations > 0).sum(dim=0)  # [num_neurons]
+
+    # Scale to 0-1 per neuron
     min_values = activations.min(dim=0, keepdim=True)[0]
     max_values = activations.max(dim=0, keepdim=True)[0]
     activations = (activations - min_values) / (max_values - min_values)
 
-    # embeddings = embeddings - embeddings.mean(dim=0, keepdim=True)
     num_images, embed_dim = embeddings.shape
     num_neurons = activations.shape[1]
 
-    # Initialize accumulators on CPU (accumulated .cpu() results in the loop)
     weighted_cosine_similarity_sum = torch.zeros(num_neurons)
     weight_sum = torch.zeros(num_neurons)
-    batch_size = 100  # Set batch size
+    batch_size = 100
 
     for i in tqdm.tqdm(range(num_images), desc="Processing image pairs"):
-        for j_start in range(i + 1, num_images, batch_size):  # Process in batches
+        for j_start in range(i + 1, num_images, batch_size):
             j_end = min(j_start + batch_size, num_images)
 
-            embeddings_i = embeddings[i].cuda()  # (embedding_dim)
-            embeddings_j = embeddings[j_start:j_end].cuda()  # (batch_size, embedding_dim)
-            activations_i = activations[i].cuda()  # (num_neurons)
-            activations_j = activations[j_start:j_end].cuda()  # (batch_size, num_neurons)
+            embeddings_i = embeddings[i].cuda()
+            embeddings_j = embeddings[j_start:j_end].cuda()
+            activations_i = activations[i].cuda()
+            activations_j = activations[j_start:j_end].cuda()
 
-            # Compute cosine similarity
             cosine_similarities = F.cosine_similarity(
-                embeddings_i.unsqueeze(0).expand(j_end - j_start, -1),  # Expanding to (batch_size, embedding_dim)
+                embeddings_i.unsqueeze(0).expand(j_end - j_start, -1),
                 embeddings_j,
                 dim=1
             )
 
-            # Compute weights and weighted similarities
-            # Expanding activations_i to (1, num_neurons)
-            weights = activations_i.unsqueeze(0) * activations_j  # (batch_size, num_neurons)
-            weighted_cosine_similarities = weights * cosine_similarities.unsqueeze(1)  # (batch_size, num_neurons)
+            weights = activations_i.unsqueeze(0) * activations_j
+            weighted_cosine_similarities = weights * cosine_similarities.unsqueeze(1)
 
-            weighted_cosine_similarities = torch.sum(weighted_cosine_similarities, dim=0)  # (num_neurons)
-            weighted_cosine_similarity_sum += weighted_cosine_similarities.cpu()
+            weighted_cosine_similarity_sum += torch.sum(weighted_cosine_similarities, dim=0).cpu()
+            weight_sum += torch.sum(weights, dim=0).cpu()
 
-            weights = torch.sum(weights, dim=0)  # (num_neurons)
-            weight_sum += weights.cpu()
+    # Base score: NaN for dead neurons (weight_sum == 0)
+    monosemanticity = torch.where(
+        weight_sum != 0,
+        weighted_cosine_similarity_sum / weight_sum,
+        torch.tensor(float("nan"))
+    )
 
-    monosemanticity = torch.where(weight_sum != 0, weighted_cosine_similarity_sum / weight_sum, torch.tensor(float('nan')))
+    # Apply min_support filter: neurons with too few activating images -> NaN
+    low_support_mask = nonzero_count < args.min_support
+    low_support_count = low_support_mask.sum().item()
+    monosemanticity[low_support_mask] = float("nan")
+    print(f"Neurons filtered by min_support={args.min_support}: {low_support_count}")
 
     os.makedirs(os.path.join(args.activations_dir, args.output_subdir), exist_ok=True)
     torch.save(monosemanticity, os.path.join(args.activations_dir, args.output_subdir, "all_neurons_scores.pth"))
 
-    is_nan = torch.isnan(monosemanticity)
-    nan_count = is_nan.sum()
-    monosemanticity_mean = torch.mean(monosemanticity[~is_nan])
-    monosemanticity_std = torch.std(monosemanticity[~is_nan])
-
-    print(f"Monosemanticity: {monosemanticity_mean.item()} +- {monosemanticity_std.item()}")
-    print(f"Dead neurons:", nan_count.item())
-    print(f"Total neurons:", num_neurons)
-
-    # Filter out NaNs
-    valid_indices = ~torch.isnan(monosemanticity)
-    valid_monosemanticity = monosemanticity[valid_indices]
-    valid_indices = torch.nonzero(valid_indices).squeeze()
-
-    # Get top 10 highest and lowest monosemantic neurons
-    top_10_values, top_10_indices = torch.topk(valid_monosemanticity, 10)
-    bottom_10_values, bottom_10_indices = torch.topk(valid_monosemanticity, 10, largest=False)
-
-    # Map indices back to original positions
-    top_10_indices = valid_indices[top_10_indices]
-    bottom_10_indices = valid_indices[bottom_10_indices]
-
-    # Print results
-    print("Top 10 most monosemantic neurons:")
-    for i, (idx, val) in enumerate(zip(top_10_indices, top_10_values)):
-        print(f"{i + 1}. Neuron {idx.item()} - {val.item()}")
-
-    print("\nBottom 10 least monosemantic neurons:")
-    for i, (idx, val) in enumerate(zip(bottom_10_indices, bottom_10_values)):
-        print(f"{i + 1}. Neuron {idx.item()} - {val.item()}")
-
-    # Save to file
     output_path = os.path.join(args.activations_dir, args.output_subdir, "metric_stats_new.txt")
-    with open(output_path, "w") as file:
-        file.write(f"Monosemanticity: {monosemanticity_mean.item()} +- {monosemanticity_std.item()}\n")
-        file.write(f"Dead neurons: {nan_count.item()}\n")
-        file.write(f"Total neurons: {num_neurons}\n\n")
-
-        file.write("Top 10 most monosemantic neurons:\n")
-        for idx, val in zip(top_10_indices, top_10_values):
-            file.write(f"Neuron {idx.item()} - {val.item()}\n")
-
-        file.write("\nBottom 10 least monosemantic neurons:\n")
-        for idx, val in zip(bottom_10_indices, bottom_10_values):
-            file.write(f"Neuron {idx.item()} - {val.item()}\n")
-
+    print_and_save_stats(monosemanticity, num_neurons, output_path, args.min_support)
 
 if __name__ == "__main__":
     args = get_args_parser()

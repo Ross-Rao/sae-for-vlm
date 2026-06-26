@@ -6,3 +6,4 @@ embeddings_dir/
 __pycache__/
 *.pyc
 .env
+temp/
