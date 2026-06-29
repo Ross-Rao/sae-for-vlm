@@ -83,18 +83,19 @@ class CheXAgent:
             output = self.model.model.visual.model(pixel_values=pixel_values)
         return output.pooler_output
 
-    def attach(self, attachment_point, layer, sae=None):
+    def attach(self, attachment_point, layer, sae=None, mean_pool=False):
         if attachment_point not in self.attach_methods:
             raise NotImplementedError(f"Attachment point {attachment_point} not implemented")
-        self.attach_methods[attachment_point](layer, sae)
+        self.attach_methods[attachment_point](layer, sae, mean_pool=mean_pool)
         self.register[f"{attachment_point}_{layer}"] = []
 
-    def _attach_post_mlp_residual(self, layer, sae):
+    def _attach_post_mlp_residual(self, layer, sae, mean_pool=False):
         self._siglip_layers[layer] = SiglipEncoderLayerPostMlpResidual(
             self._siglip_layers[layer],
             sae,
             layer,
             self.register,
+            mean_pool=mean_pool,
         )
 
     def attach_and_fix(self, sae, neurons_to_fix={}, pre_zero=False):
@@ -128,7 +129,7 @@ class SAEWrapper(nn.Module):
 class SiglipEncoderLayerPostMlpResidual(nn.Module):
     """Hooks into SigLIP encoder layer to capture/modify post-MLP residual activations."""
 
-    def __init__(self, base, sae, layer, register):
+    def __init__(self, base, sae, layer, register, mean_pool=False):
         super().__init__()
         self.self_attn = base.self_attn
         self.layer_norm1 = base.layer_norm1
@@ -137,6 +138,7 @@ class SiglipEncoderLayerPostMlpResidual(nn.Module):
         self.sae = sae
         self.layer = layer
         self.register = register
+        self.mean_pool = mean_pool
 
     def forward(
         self,
@@ -158,11 +160,14 @@ class SiglipEncoderLayerPostMlpResidual(nn.Module):
         hidden_states = residual + hidden_states
 
         if self.sae is not None:
-            hidden_states = self.sae.encode(hidden_states)
-            self.register[f"post_mlp_residual_{self.layer}"].append(hidden_states.detach().cpu())
-            hidden_states = self.sae.decode(hidden_states)
+            orig_dtype = hidden_states.dtype
+            encoded = self.sae.encode(hidden_states)
+            stored = encoded.mean(dim=1) if self.mean_pool else encoded
+            self.register[f"post_mlp_residual_{self.layer}"].append(stored.detach().cpu())
+            hidden_states = self.sae.decode(encoded).to(orig_dtype)
         else:
-            self.register[f"post_mlp_residual_{self.layer}"].append(hidden_states.detach().cpu())
+            stored = hidden_states.mean(dim=1) if self.mean_pool else hidden_states
+            self.register[f"post_mlp_residual_{self.layer}"].append(stored.detach().cpu())
 
         outputs = (hidden_states,)
         if output_attentions:

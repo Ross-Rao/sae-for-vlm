@@ -62,7 +62,7 @@ def save_activations(activations, count, split, save_count, args):
 
     filename = f"{args.dataset_name}_{split}_activations_{args.model_name}_{args.layer}_{args.attachment_point}_part{save_count + 1}.pt"
     save_path = os.path.join(args.output_dir, filename)
-    torch.save(torch.tensor(activations_tensor.cpu().numpy()), save_path)
+    torch.save(activations_tensor.cpu().float(), save_path)
     print(f"Saved the activations at count {count} to {save_path}")
 
 def collect_activations(args):
@@ -80,7 +80,7 @@ def collect_activations(args):
         sae = None
         print(f"No SAE attached. Saving original activations")
 
-    model.attach(args.attachment_point, args.layer, sae=sae, mean_pool=args.mean_pool if sae is not None else False)
+    model.attach(args.attachment_point, args.layer, sae=sae, mean_pool=args.mean_pool)
 
     ds, dl = get_dataset(args, preprocess=None, processor=processor, split=args.split)
     activations = []

@@ -24,7 +24,7 @@ def parse_args():
     parser.add_argument('--output_path', type=str, required=True)
     parser.add_argument('--neuron_prefix', type=int, default=None)
     parser.add_argument("--steer", action=argparse.BooleanOptionalAction)
-    parser.add_argument("--vlm_backend", type=str, default="llava", choices=["llava", "llava_med", "med_flamingo"])
+    parser.add_argument("--vlm_backend", type=str, default="llava", choices=["llava", "llava_med", "med_flamingo", "chexagent"])
     parser.add_argument("--max_images", type=int, default=200, help="Max images to sample for steering eval")
     return parser.parse_args()
 
@@ -109,7 +109,12 @@ if __name__ == "__main__":
     print("DeepSeek API key loaded.")
 
     # Get HAI indices
-    hai_indices = torch.from_numpy(np.load(args.hai_indices_path)).to(args.device)
+    _raw_hai = np.load(args.hai_indices_path, allow_pickle=True)
+    _k = max((len(x) for x in _raw_hai if len(x) > 0), default=16)
+    def _pad(x, k):
+        if len(x) == 0: return np.zeros(k, dtype=np.int64)
+        return np.pad(x, (0, max(0, k - len(x))), mode='edge')[:k]
+    hai_indices = torch.from_numpy(np.stack([_pad(x, _k) for x in _raw_hai])).to(args.device)
     print(f"Loaded HAI indices found at {args.hai_indices_path}")
     print(f"hai_indices shape: {hai_indices.shape}")
 
@@ -128,9 +133,12 @@ if __name__ == "__main__":
     if args.vlm_backend == 'llava_med':
         from models.llava_med import LlavaMed
         llava = LlavaMed(args.device)
-    elif args.vlm_backend == 'med_flamingo':
+    elif args.vlm_backend == "med_flamingo":
         from models.med_flamingo import MedFlamingo
         llava = MedFlamingo(args.device)
+    elif args.vlm_backend == "chexagent":
+        from models.chexagent import CheXAgent
+        llava = CheXAgent(args.device)
     else:
         llava = Llava(args.device)
     if args.sae_path:
